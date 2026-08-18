@@ -1,12 +1,15 @@
 using AlphaAutomation.Utilities;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+using AventStack.ExtentReports.Model;
+using AventStack.ExtentReports.Reporter.Configuration;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Support.UI;
 using System;
-using System.Linq;
-using System.Security.Cryptography.X509Certificates;
-using System.Threading;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace AlphaAutomation.Pages.Web
 {
@@ -19,13 +22,14 @@ namespace AlphaAutomation.Pages.Web
         {
             _driver = driver ?? throw new ArgumentNullException(nameof(driver));
             _wait = WaitHelper.CreateWait(_driver, timeout);
+
+
         }
 
         private By LnkCreateOutlookEmail => By.XPath("//a[contains(., 'OUTLOOK') and contains(., 'EMAIL')]");
         private By FrmWizard => By.Name("wndCorrespondenceWizard");
+        private By BtnRadio1 => By.Id("templateListRadio_1");
         private By BtnNext => By.XPath("//a[text()='Next']");
-        private By TxtDescription => By.Id("description");
-        private By SelDocumentType => By.Id("selDocumentType");
         private By BtnFinish => By.XPath("//a[text()='Finish']");
         private By LnkFileCabinet => By.Id("lnkFileCabinet");
         private By Spinner => By.Id("cover-spin");
@@ -34,119 +38,71 @@ namespace AlphaAutomation.Pages.Web
 
         public void ClickCreateOutlookEmail()
         {
-            WaitHelper.WaitForSpinnerToDisappear(_driver, TimeSpan.FromSeconds(60), Spinner);
+            WaitHelper.WaitForSpinnerToDisappear(_driver, TimeSpan.FromSeconds(10), Spinner);
 
             var createLink = _wait.Until(drv =>
             {
                 var el = drv.FindElement(LnkCreateOutlookEmail);
                 return (el.Displayed && el.Enabled) ? el : null;
             }) ?? throw new NoSuchElementException($"Element '{LnkCreateOutlookEmail}' was not found or not clickable.");
-
+            Thread.Sleep(500);
             createLink.Click();
         }
+        // brief pause to allow the wizard frame to load before interactions
+        
+        public void CompleteWizard()
 
-        public void CompleteWizard(string descriptionText, string documentTypeText, string documentValueFallback)
         {
             WaitHelper.SwitchToFrame(_driver, _wait, FrmWizard);
 
             WaitHelper.WaitForSpinnerToDisappear(_driver, TimeSpan.FromSeconds(60), Spinner);
+            Thread.Sleep(500);
+
+            var radio1 = _wait.Until(drv =>
+            {
+                var el = drv.FindElement(BtnRadio1);
+                return (el.Displayed && el.Enabled) ? el : null;
+            }) ?? throw new NoSuchElementException($"Element '{BtnRadio1}' was not found or not clickable.");
+            radio1.Click();
+            Thread.Sleep(1000);
             var next = _wait.Until(drv =>
             {
                 var el = drv.FindElement(BtnNext);
                 return (el.Displayed && el.Enabled) ? el : null;
             }) ?? throw new NoSuchElementException($"Element '{BtnNext}' was not found or not clickable.");
-            next.Click();
-
-            var desc = _wait.Until(drv =>
+            // Ensure any loading spinner has disappeared before attempting to click Next
+            WaitHelper.WaitForSpinnerToDisappear(_driver, TimeSpan.FromSeconds(60), Spinner);
+            Thread.Sleep(250);
+            try
             {
-                var el = drv.FindElement(TxtDescription);
-                return (el.Displayed && el.Enabled) ? el : null;
-            }) ?? throw new NoSuchElementException($"Element '{TxtDescription}' was not found or not interactable.");
-            desc.Clear();
-            desc.SendKeys(descriptionText);
-
-            var dropdown = _wait.Until(drv =>
-            {
-                var el = drv.FindElement(SelDocumentType);
-                return (el.Displayed && el.Enabled) ? el : null;
-            }) ?? throw new NoSuchElementException($"Element '{SelDocumentType}' was not found or not interactable.");
-
-            if (string.Equals(dropdown.TagName, "select", StringComparison.OrdinalIgnoreCase))
-            {
-                var select = new SelectElement(dropdown);
-
-                // Wait for options to populate
-                try
-                {
-                    _wait.Until(drv => select.Options != null && select.Options.Count > 0);
-                }
-                catch (WebDriverTimeoutException)
-                {
-                    throw new NoSuchElementException($"Select element '{SelDocumentType}' has no options after waiting.");
-                }
-
-                // Try select by visible text first, then by value fallback. If neither found, include available options in the exception.
-                try
-                {
-                    select.SelectByText(documentTypeText);
-                }
-                catch (NoSuchElementException)
-                {
-                    try
-                    {
-                        select.SelectByValue(documentValueFallback);
-                    }
-                    catch (NoSuchElementException)
-                    {
-                        var available = string.Join(",", select.Options.Select(o => (o.GetAttribute("value") ?? "") + ":" + o.Text));
-                        throw new NoSuchElementException($"Unable to select document type by text '{documentTypeText}' or value '{documentValueFallback}'. Available options: {available}");
-                    }
-                }
+                next.Click();
             }
-            else
+            catch (ElementClickInterceptedException)
             {
-                dropdown.Click();
+                ((IJavaScriptExecutor)_driver).ExecuteScript("arguments[0].click();", next);
             }
+
 
             var finish = _wait.Until(drv =>
             {
                 var el = drv.FindElement(BtnFinish);
                 return (el.Displayed && el.Enabled) ? el : null;
             }) ?? throw new NoSuchElementException($"Element '{BtnFinish}' was not found or not clickable.");
+            // Ensure any loading spinner has disappeared before attempting to click Finish
+            WaitHelper.WaitForSpinnerToDisappear(_driver, TimeSpan.FromSeconds(60), Spinner);
+            Thread.Sleep(250);
+            finish.Click();
 
-            // Wait for any overlaying disabled list items to disappear which have been observed to intercept clicks
-            try
-            {
-                var overlayLocator = By.XPath("//li[@aria-hidden='false' and contains(@class,'disabled')]");
-                _wait.Until(drv => drv.FindElements(overlayLocator).Count == 0);
-            }
-            catch (WebDriverTimeoutException)
-            {
-                // proceed to click anyway; fallback will handle interception
-            }
-
-            // Try a normal click, but if another element intercepts it, fall back to a JS click (scroll into view then click)
-            try
-            {
-                finish.Click();
-            }
-            catch (ElementClickInterceptedException)
-            {
-                try
-                {
-                    ((IJavaScriptExecutor)_driver).ExecuteScript("arguments[0].scrollIntoView(true);", finish);
-                    ((IJavaScriptExecutor)_driver).ExecuteScript("arguments[0].click();", finish);
-                }
-                catch
-                {
-                    // If JS click also fails, rethrow the original exception to preserve stack trace for diagnostics
-                    throw;
-                }
-            }
 
             _driver.SwitchTo().DefaultContent();
+            
+            
         }
 
+        public void Closebrowser()
+        {
+            _driver.Quit();
+        }
         public void ClickFileCabinetButton()
         {
             var fileCabinet = _wait.Until(drv =>
@@ -154,20 +110,6 @@ namespace AlphaAutomation.Pages.Web
                 var el = drv.FindElement(LnkFileCabinet);
                 return (el.Displayed && el.Enabled) ? el : null;
             }) ?? throw new NoSuchElementException($"Element '{LnkFileCabinet}' was not found or not clickable.");
-
-            // Override page alert/confirm handlers so that any confirm that appears when opening the file cabinet is auto-accepted
-            try
-            {
-                if (_driver is IJavaScriptExecutor js)
-                {
-                    js.ExecuteScript("window.confirm = function(){return true;}; window.alert = function(){}; window.onbeforeunload = null;");
-                }
-            }
-            catch
-            {
-                // best-effort; if JS execution fails, continue and rely on AcceptAlertIfPresent
-            }
-
             fileCabinet.Click();
 
         }
@@ -213,8 +155,6 @@ namespace AlphaAutomation.Pages.Web
             if (newHandle != null)
             {
                 _driver.SwitchTo().Window(newHandle);
-                // Accept any confirm/alert that appears immediately after switching to the new tab
-                AcceptAlert();
                 return;
             }
 
@@ -232,29 +172,123 @@ namespace AlphaAutomation.Pages.Web
             if (allHandles != null && allHandles.Count > 0)
             {
                 _driver.SwitchTo().Window(allHandles.Last());
-                // Accept any confirm/alert that appears immediately after switching to the new tab
-                AcceptAlert();
                 return;
             }
 
             throw new InvalidOperationException("New tab did not open as expected.");
         }
-        public void AcceptAlert()
-        {
-            WaitHelper.AcceptAlertIfPresent(_driver, 10);
-        }
-        public void ClickEmailGrid()
-        {
 
-            var emailGrid = _wait.Until(drv =>
+        private static readonly Regex DuplicateSuffixRegex = new Regex(@"\s\d+$", RegexOptions.Compiled);
+
+        public void ClickEmailGrid(string subject)
+        {
+            WaitHelper.WaitForUiReady(_driver);
+
+            int maxAttempts = 3;
+            IWebElement matchedIcon = null;
+            string normalizedSubject = NormalizeFileName(subject);
+
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
-                var el = drv.FindElement(By.XPath("(//span[@title='Open File In Native App'])[1]"));
-                return (el.Displayed && el.Enabled) ? el : null;
-            }) ?? throw new NoSuchElementException($"Element 'emailGrid' was not found or not clickable.");
-            emailGrid.Click();
+                try
+                {
+                    
 
+                    matchedIcon = _wait.Until(driver =>
+                    {
+                        try
+                        {
+                            var rows = driver.FindElements(
+                                By.XPath("//tr[contains(@class,'k-table-row') and contains(@class,'k-master-row')]"));
+
+                            foreach (var row in rows)
+                            {
+                                try
+                                {
+                                    // Filename lives in div.filenameLink > div.truncateCell
+                                    var fileNameElement = row.FindElement(
+                                        By.XPath(".//div[contains(@class,'filenameLink')]"));
+
+                                    string fileText = (fileNameElement.Text ?? "").Trim();
+                                    if (string.IsNullOrEmpty(fileText))
+                                        continue;
+
+                                    string normalizedFileName = NormalizeFileName(fileText);
+
+                                    if (!normalizedFileName.Equals(normalizedSubject, StringComparison.OrdinalIgnoreCase))
+                                        continue;
+
+                                    // Email icon is identified by icon-file-color-email, not k-i-email
+                                    var icon = row.FindElement(
+                                        By.XPath(".//span[contains(@class,'icon-file-color-email')]"));
+
+                                    if (icon.Displayed && icon.Enabled)
+                                        return icon;
+                                }
+                                catch (NoSuchElementException) { continue; }
+                                catch (StaleElementReferenceException) { continue; }
+                            }
+
+                            return null;
+                        }
+                        catch (NoSuchElementException)
+                        {
+                            return null;
+                        }
+                    });
+
+                    if (matchedIcon != null)
+                        break;
+                }
+                catch (WebDriverTimeoutException)
+                {
+                    // Ignore and retry
+                }
+
+                if (attempt < maxAttempts)
+                {
+                    _driver.Navigate().Refresh();
+                    
+                }
+            }
+
+            if (matchedIcon == null)
+            {
+                var rowTexts = _driver.FindElements(By.XPath("//tr[contains(@class,'k-table-row') and contains(@class,'k-master-row')]"))
+                    .Select(r => (r.Text ?? "").Trim())
+                    .Where(t => !string.IsNullOrEmpty(t))
+                    .ToList();
+
+                throw new NoSuchElementException(
+                    $"No matching email found for subject: {subject}. " +
+                    $"Rows found: {rowTexts.Count}. Raw row text:\n{string.Join("\n---\n", rowTexts)}");
+            }
+
+            matchedIcon.Click();
         }
+
+        private static string NormalizeFileName(string fileText)
+        {
+            string name = (fileText ?? "").Trim();
+
+            if (name.EndsWith(".msg", StringComparison.OrdinalIgnoreCase))
+                name = name.Substring(0, name.Length - 4);
+
+            name = DuplicateSuffixRegex.Replace(name, "").Trim();
+
+            return name;
+        }
+
+
+
+
+
 
     }
+
+
+
+
 }
+
 
