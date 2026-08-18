@@ -4,6 +4,7 @@ using System.Threading;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Support.UI;
 
+
 namespace AlphaAutomation.Utilities
 {
     public static class WaitHelper
@@ -45,7 +46,7 @@ namespace AlphaAutomation.Utilities
                 }
                 catch (ElementClickInterceptedException)
                 {
-                    Thread.Sleep(500);
+                    Thread.Sleep(1000);
                     element = driver.FindElement(locator);
                 }
                 catch (StaleElementReferenceException)
